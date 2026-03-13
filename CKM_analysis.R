@@ -1,8 +1,11 @@
 ## =============================================================================
-## CKM MAIHDA Analysis - Stan Model Post-Processing
-## Design-weighted Bayesian multilevel logistic regression
+## CKM MAIHDA Analysis - Design-Weighted Bayesian Multilevel Logistic Regression
+## Model 2: Fixed effects + random intercept for stratum
 ## =============================================================================
 
+library(rstudioapi)
+library(survey)
+library(ggthemes)
 library(brms)
 library(rstan)
 library(dplyr)
@@ -10,11 +13,12 @@ library(ggplot2)
 library(bayesplot)
 library(gridExtra)
 
+setwd("~/Documents/julie mercer")
+
 ## -----------------------------------------------------------------------------
 ## Helper Functions
 ## -----------------------------------------------------------------------------
 
-# Rename MCMC array parameters with human-readable group names
 renameArray <- function(model, names, start, finish) {
   array <- as.array(model)
   for (i in start:finish) {
@@ -95,13 +99,21 @@ groupName <- c(
 )
 
 ## -----------------------------------------------------------------------------
-## M2 Model Formula (for reference)
-## brmsformula(
-##   as.factor(ckm)|weights(wt_norm) ~
-##     1 + year + black + asian + other_multi + hispanic +
-##     transwomen + cismen + transmen +
-##     age3054 + age55plus + (1 | stratum)
-## )
+## Data and Priors
+## -----------------------------------------------------------------------------
+
+ckm_pop <- readRDS("~/Downloads/ckm_pop.rds")
+
+brfss_priors <- c(
+  prior(normal(0, 2), class = Intercept),
+  prior(normal(0, 2), class = b),
+  prior(inv_gamma(2, 2), class = sd)
+)
+
+## -----------------------------------------------------------------------------
+## M2 Model: Fixed Effects + Random Intercept
+## Formula: ckm ~ 1 + year + black + asian + other_multi + hispanic +
+##                transwomen + cismen + transmen + age3054 + age55plus + (1|stratum)
 ##
 ## Parameter mapping:
 ##   b[1]:  year2018       b[2]:  year2019       b[3]:  year2020
@@ -114,10 +126,67 @@ groupName <- c(
 ## Reference categories: White, Ciswomen, Age 18-29, Year 2017
 ## -----------------------------------------------------------------------------
 
-## Corrected parameter labels for M2 fixed effects
-## NOTE: b[12] corresponds to "cismen" (Cis Men), NOT "Cis Women".
-##       Ciswomen is the REFERENCE category for gender.
+m2_formula <- brmsformula(
+  as.factor(ckm)|weights(wt_norm) ~
+    1 + year + black + asian + other_multi + hispanic +
+    transwomen + cismen + transmen +
+    age3054 + age55plus + (1 | stratum)
+)
 
+## Generate Stan code
+stancode_CKM_m2 <- make_stancode(
+  m2_formula,
+  data = ckm_pop,
+  prior = brfss_priors,
+  family = bernoulli(link = "logit"),
+  save_model = "~/Documents/julie mercer/brms_CKM_m2.stan"
+)
+
+## Compile Stan model
+modbrms_CKM_m2 <- stan_model("~/Documents/julie mercer/brms_CKM_m2.stan")
+
+## Load survey design objects
+load("~/Downloads/survey_design_objects.RData")
+
+## Set up data
+databrms_CKM_m2 <- make_standata(
+  m2_formula,
+  data = design_sp1$variables,
+  prior = brfss_priors,
+  family = bernoulli(link = "logit")
+)
+databrms_CKM_m2$weights <- design_sp1$pweights
+
+## Model estimation
+set.seed(82)
+CKM_m2 <- cs_sampling(
+  svydes = design_sp1,
+  mod_stan = modbrms_CKM_m2,
+  data_stan = databrms_CKM_m2,
+  ctrl_stan = list(
+    chains = 4,
+    iter = 4000,
+    warmup = 2000,
+    prior = brfss_priors,
+    backend = "cmdstanr",
+    threads = threading(2),
+    thin = 2
+  ),
+  rep_design = TRUE,
+  sampling_args = list(cores = 4)
+)
+
+## Save the model
+saveRDS(CKM_m2, file = "~/Documents/julie mercer/CKM_m2.stan")
+
+## -----------------------------------------------------------------------------
+## Post-Processing: Extract OR Estimates with Corrected Labels
+## NOTE: b[12] = cismen (Cis Men), NOT Cis Women. Ciswomen is the reference.
+## -----------------------------------------------------------------------------
+
+pyMDE_m2_sum <- summary(CKM_m2)$summary
+
+## Corrected parameter labels
 m2_parameter_labels <- c(
   "Year 2018", "Year 2019", "Year 2020", "Year 2021",
   "Year 2022", "Year 2023",
@@ -126,39 +195,32 @@ m2_parameter_labels <- c(
   "Age 30-54", "Age 55+", "Intercept"
 )
 
-## -----------------------------------------------------------------------------
-## M2 Mean Estimates (Odds Ratios with 95% Credible Intervals)
-## -----------------------------------------------------------------------------
+## Mean estimates (OR with 95% CrI)
+pyMDE_m2_mean_estimates <- pyMDE_m2_sum %>%
+  as.data.frame() %>%
+  filter(grepl("^b\\[|^b_Intercept", rownames(.))) %>%
+  mutate(
+    parameter = m2_parameter_labels,
+    OR = format(round(exp(mean), digits = 3), nsmall = 2),
+    LB = format(round(exp(`2.5%`), digits = 3), nsmall = 2),
+    UB = format(round(exp(`97.5%`), digits = 3), nsmall = 2),
+    est = paste0(OR, " (", LB, ", ", UB, ")")
+  ) %>%
+  dplyr::select(parameter, est)
 
-# Load M2 stanfit object (uncomment when running):
-# CKM_m2 <- readRDS("CKM_m2.stan")
+## Median estimates (OR with 95% CrI)
+pyMDE_m2_med_estimates <- pyMDE_m2_sum %>%
+  as.data.frame() %>%
+  filter(grepl("^b\\[|^b_Intercept", rownames(.))) %>%
+  mutate(
+    parameter = m2_parameter_labels,
+    OR = format(round(exp(`50%`), digits = 3), nsmall = 2),
+    LB = format(round(exp(`2.5%`), digits = 3), nsmall = 2),
+    UB = format(round(exp(`97.5%`), digits = 3), nsmall = 2),
+    est = paste0(OR, " (", LB, ", ", UB, ")")
+  ) %>%
+  dplyr::select(parameter, est)
 
-# pyMDE_m2_sum <- summary(CKM_m2)$summary
-
-# pyMDE_m2_mean_estimates <- pyMDE_m2_sum %>%
-#   as.data.frame() %>%
-#   filter(grepl("^b\\[|^b_Intercept", rownames(.))) %>%
-#   mutate(
-#     parameter = m2_parameter_labels,
-#     OR = format(round(exp(mean), digits = 3), nsmall = 2),
-#     LB = format(round(exp(`2.5%`), digits = 3), nsmall = 2),
-#     UB = format(round(exp(`97.5%`), digits = 3), nsmall = 2),
-#     est = paste0(OR, " (", LB, ", ", UB, ")")
-#   ) %>%
-#   dplyr::select(parameter, est)
-
-## -----------------------------------------------------------------------------
-## M2 Median Estimates (Odds Ratios with 95% Credible Intervals)
-## -----------------------------------------------------------------------------
-
-# pyMDE_m2_med_estimates <- pyMDE_m2_sum %>%
-#   as.data.frame() %>%
-#   filter(grepl("^b\\[|^b_Intercept", rownames(.))) %>%
-#   mutate(
-#     parameter = m2_parameter_labels,
-#     OR = format(round(exp(`50%`), digits = 3), nsmall = 2),
-#     LB = format(round(exp(`2.5%`), digits = 3), nsmall = 2),
-#     UB = format(round(exp(`97.5%`), digits = 3), nsmall = 2),
-#     est = paste0(OR, " (", LB, ", ", UB, ")")
-#   ) %>%
-#   dplyr::select(parameter, est)
+## View results
+pyMDE_m2_mean_estimates
+pyMDE_m2_med_estimates
