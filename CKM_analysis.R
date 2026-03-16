@@ -168,6 +168,7 @@ CKM_m2 <- cs_sampling(
   ctrl_stan = list(chains = 4,
                    iter = 6000,
                    warmup = 1000,
+                   thin = 1,
                    prior = brfss_priors,
                    backend = "cmdstanr",
                    threads = threading(2)),
