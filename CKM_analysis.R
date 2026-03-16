@@ -104,11 +104,8 @@ groupName <- c(
 
 ckm_pop <- readRDS("~/Downloads/ckm_pop.rds")
 
-brfss_priors <- c(
-  prior(normal(0, 2), class = Intercept),
-  prior(normal(0, 2), class = b),
-  prior(inv_gamma(2, 2), class = sd)
-)
+## Load survey design objects
+load("~/Downloads/survey_design_objects.RData")
 
 ## -----------------------------------------------------------------------------
 ## M2 Model: Fixed Effects + Random Intercept
@@ -126,58 +123,58 @@ brfss_priors <- c(
 ## Reference categories: White, Ciswomen, Age 18-29, Year 2017
 ## -----------------------------------------------------------------------------
 
-m2_formula <- brmsformula(
-  as.factor(ckm)|weights(wt_norm) ~
-    1 + year + black + asian + other_multi + hispanic +
-    transwomen + cismen + transmen +
-    age3054 + age55plus + (1 | stratum)
+#################
+#### Model 2 ####
+#################
+# Match priors to unweighted model
+brfss_priors <- c(
+  prior(normal(0, 1), class = b),
+  prior(student_t(3, 0, 2.5), class = Intercept),
+  prior(student_t(3, 0, 2.5), class = sd)
 )
-
-## Generate Stan code
+# Write and save Stan file
 stancode_CKM_m2 <- make_stancode(
-  m2_formula,
+  brmsformula(
+    as.factor(ckm)|weights(wt_norm) ~
+      1 + year + black + asian + other_multi + hispanic +
+      transwomen + cismen + transmen +
+      age3054 + age55plus + (1 | stratum)
+  ),
   data = ckm_pop,
   prior = brfss_priors,
-  family = bernoulli(link = "logit"),
-  save_model = "~/Documents/julie mercer/brms_CKM_m2.stan"
-)
-
-## Compile Stan model
-modbrms_CKM_m2 <- stan_model("~/Documents/julie mercer/brms_CKM_m2.stan")
-
-## Load survey design objects
-load("~/Downloads/survey_design_objects.RData")
-
-## Set up data
+  family = bernoulli(link="logit"),
+  save_model = "~/Documents/julie mercer/brms_CKM_m2_redo.stan")
+# Load the Stan file
+modbrms_CKM_m2 <- stan_model("~/Documents/julie mercer/brms_CKM_m2_redo.stan")
+# Set up data
 databrms_CKM_m2 <- make_standata(
-  m2_formula,
+  brmsformula(
+    as.factor(ckm)|weights(wt_norm) ~
+      1 + year + black + asian + other_multi + hispanic +
+      transwomen + cismen + transmen +
+      age3054 + age55plus + (1 | stratum)
+  ),
   data = design_sp1$variables,
   prior = brfss_priors,
-  family = bernoulli(link = "logit")
-)
+  family = bernoulli(link="logit"))
+# Set Stan model weights = survey design weights
 databrms_CKM_m2$weights <- design_sp1$pweights
-
-## Model estimation
-set.seed(82)
+# Model estimation
+set.seed(82) # for reproducible results
 CKM_m2 <- cs_sampling(
-  svydes = design_sp1,
+  svydes = design_sp1, # use the subpop-defined survey object
   mod_stan = modbrms_CKM_m2,
   data_stan = databrms_CKM_m2,
-  ctrl_stan = list(
-    chains = 4,
-    iter = 4000,
-    warmup = 2000,
-    prior = brfss_priors,
-    backend = "cmdstanr",
-    threads = threading(2),
-    thin = 2
-  ),
+  ctrl_stan = list(chains = 4,
+                   iter = 6000,
+                   warmup = 1000,
+                   prior = brfss_priors,
+                   backend = "cmdstanr",
+                   threads = threading(2)),
   rep_design = TRUE,
-  sampling_args = list(cores = 4)
-)
-
-## Save the model
-saveRDS(CKM_m2, file = "~/Documents/julie mercer/CKM_m2.stan")
+  sampling_args = list(cores = 4))
+# Save the model
+saveRDS(CKM_m2, file="~/Documents/julie mercer/CKM_m2_redo.stan")
 
 ## -----------------------------------------------------------------------------
 ## Post-Processing: Extract OR Estimates with Corrected Labels
