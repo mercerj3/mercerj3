@@ -195,31 +195,25 @@ m2_parameter_labels <- c(
   "Age 30-54", "Age 55+", "Intercept"
 )
 
-## Mean estimates (OR with 95% CrI)
+## Mean estimates (OR only)
 pyMDE_m2_mean_estimates <- pyMDE_m2_sum %>%
   as.data.frame() %>%
   filter(grepl("^b\\[|^b_Intercept", rownames(.))) %>%
   mutate(
     parameter = m2_parameter_labels,
-    OR = format(round(exp(mean), digits = 3), nsmall = 2),
-    LB = format(round(exp(`2.5%`), digits = 3), nsmall = 2),
-    UB = format(round(exp(`97.5%`), digits = 3), nsmall = 2),
-    est = paste0(OR, " (", LB, ", ", UB, ")")
+    OR = format(round(exp(mean), digits = 3), nsmall = 2)
   ) %>%
-  dplyr::select(parameter, est)
+  dplyr::select(parameter, OR)
 
-## Median estimates (OR with 95% CrI)
+## Median estimates (OR only)
 pyMDE_m2_med_estimates <- pyMDE_m2_sum %>%
   as.data.frame() %>%
   filter(grepl("^b\\[|^b_Intercept", rownames(.))) %>%
   mutate(
     parameter = m2_parameter_labels,
-    OR = format(round(exp(`50%`), digits = 3), nsmall = 2),
-    LB = format(round(exp(`2.5%`), digits = 3), nsmall = 2),
-    UB = format(round(exp(`97.5%`), digits = 3), nsmall = 2),
-    est = paste0(OR, " (", LB, ", ", UB, ")")
+    OR = format(round(exp(`50%`), digits = 3), nsmall = 2)
   ) %>%
-  dplyr::select(parameter, est)
+  dplyr::select(parameter, OR)
 
 ## View results
 pyMDE_m2_mean_estimates
