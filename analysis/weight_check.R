@@ -71,6 +71,51 @@ wt %>%
   mutate(across(where(is.numeric), ~ round(.x, 2)))
 
 
+# ---- 1b. Mean change in BOTH units, per participant + pooled ----------------
+# One table, every version of the number:
+#   lbs_col_*  = change computed straight down the lbs column, reported in lbs
+#   kg_col_*   = change computed straight down the kg column,  reported in kg
+#   avg_kg / avg_lbs = the two routes averaged, shown in each unit
+# Neither column is corrected or preferred; the last two are just the same
+# quantity expressed twice.
+
+# only visits with all four weights, so every column below uses the same rows
+wt4 <- wt %>%
+  drop_na(Weight_lbs_pre, Weight_kg_pre, Weight_lbs_post, Weight_kg_post) %>%
+  mutate(d_lbs    = Weight_lbs_post - Weight_lbs_pre,
+         d_kg     = Weight_kg_post  - Weight_kg_pre,
+         d_avg_kg = (d_lbs / K + d_kg) / 2)
+
+summarise_change <- function(d) {
+  summarise(d,
+    n_visits     = n(),
+    lbs_col_mean = mean(d_lbs), lbs_col_sd = sd(d_lbs),
+    kg_col_mean  = mean(d_kg),  kg_col_sd  = sd(d_kg),
+    avg_kg       = mean(d_avg_kg),
+    avg_lbs      = mean(d_avg_kg) * K,
+    .groups = "drop"
+  )
+}
+
+change_both_units <- bind_rows(
+  wt4 %>% group_by(PIN) %>% summarise_change() %>% mutate(PIN = as.character(PIN)),
+  # pooled over all visits (weights each visit equally)
+  wt4 %>% summarise_change() %>% mutate(PIN = "ALL (pooled visits)"),
+  # pooled over participants (weights each person equally -- use this one if
+  # unequal visit counts across participants would otherwise skew the mean)
+  wt4 %>% group_by(PIN) %>% summarise_change() %>%
+    summarise(n_visits = sum(n_visits),
+              lbs_col_mean = mean(lbs_col_mean), lbs_col_sd = sd(lbs_col_mean),
+              kg_col_mean  = mean(kg_col_mean),  kg_col_sd  = sd(kg_col_mean),
+              avg_kg = mean(avg_kg), avg_lbs = mean(avg_lbs)) %>%
+    mutate(PIN = "ALL (mean of participant means)")
+) %>%
+  relocate(PIN) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+change_both_units
+
+
 # ---- 2. Resting weight across the study, per participant --------------------
 # Separate question: is body weight drifting over the program?
 
