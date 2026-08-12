@@ -8,6 +8,14 @@ exercise <- Exercise_Vitals_1_9v2
 
 Packages: `tidyverse`, `lme4`, `lmerTest`, `broom`, `broom.mixed`.
 
+Three files, each runnable on its own:
+
+| file | what it answers |
+|---|---|
+| `exercise_vitals_analyses.R` | the full set — QC, descriptives, pre→post, trends, ICC, EKG, FeNO, hydration, anthropometrics |
+| `weight_check.R` | how much weight each participant loses per session, and how resting weight moves across the study |
+| `weight_unit_discrepancy.R` | how far apart the lbs and kg columns are, and whether that disagreement is systematic |
+
 ## What's in the file
 
 | § | Analysis |
