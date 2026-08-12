@@ -64,7 +64,25 @@ exercise <- exercise %>%
     MAP_Pre    = Diastolic_Pre  + (Systolic_Pre  - Diastolic_Pre)  / 3,
     MAP_Post   = Diastolic_Post + (Systolic_Post - Diastolic_Post) / 3,
     Pulse_Pressure_Pre  = Systolic_Pre  - Diastolic_Pre,
-    Pulse_Pressure_Post = Systolic_Post - Diastolic_Post
+    Pulse_Pressure_Post = Systolic_Post - Diastolic_Post,
+
+    # WEIGHT CHANGE ACROSS THE BOUT
+    # Weight is recorded twice at each timepoint, once in lbs and once in kg.
+    # Every value is kept exactly as entered -- nothing here corrects, drops,
+    # or back-converts a weight. Instead the change is computed separately
+    # down each unit column, and the two results are averaged, so neither
+    # entry is treated as the "true" one.
+    #
+    # This also happens to be robust to the lbs/kg inconsistencies: whatever
+    # offset sits between the two columns is present in BOTH the pre and the
+    # post value of the same column, so it cancels in the subtraction.
+    Weight_delta_from_lbs = (Weight_lbs_post - Weight_lbs_pre) / 2.20462,
+    Weight_delta_from_kg  =  Weight_kg_post  - Weight_kg_pre,
+    Weight_delta_kg = rowMeans(
+      cbind(Weight_delta_from_lbs, Weight_delta_from_kg), na.rm = TRUE),
+    # rowMeans returns NaN when both units are missing; make that a clean NA
+    Weight_delta_kg  = if_else(is.nan(Weight_delta_kg), NA_real_, Weight_delta_kg),
+    Weight_delta_lbs = Weight_delta_kg * 2.20462
   ) %>%
   group_by(PIN) %>%
   arrange(Visit_Date, .by_group = TRUE) %>%
@@ -95,7 +113,13 @@ paired <- pair_spec %>%
   list_rbind() %>%
   filter(!is.na(pre), !is.na(post)) %>%
   mutate(delta = post - pre,
-         measure = factor(measure, levels = pair_spec$measure))
+         measure = factor(measure, levels = pair_spec$measure)) %>%
+  # For weight, swap in the two-unit average from section 0 rather than the
+  # kg column alone. pre/post stay as recorded (kg) for plotting.
+  left_join(exercise %>% select(PIN, Visit_Num, Weight_delta_kg),
+            by = c("PIN", "Visit_Num")) %>%
+  mutate(delta = if_else(measure == "Weight", Weight_delta_kg, delta)) %>%
+  select(-Weight_delta_kg)
 
 
 # =============================================================================
@@ -127,14 +151,50 @@ exercise %>%
   arrange(n_present) %>%
   print(n = Inf)
 
-# 1c. Unit-conversion check. Weight_conv_* is lbs/kg and should sit at 2.2046.
-#     Anything off means one of the two weights was mistyped.
+# 1c. lbs vs kg agreement -- DESCRIPTIVE ONLY.
+#     This does not flag, exclude, or rewrite any weight. It exists so you can
+#     state how closely the two unit columns track each other, and so the
+#     averaged change score in section 0 has a documented error bar.
+#
+#     Read it as: "the two columns imply weights that differ by X lbs" -- not
+#     as a list of bad rows.
 exercise %>%
-  mutate(ratio_pre  = Weight_lbs_pre  / Weight_kg_pre,
-         ratio_post = Weight_lbs_post / Weight_kg_post) %>%
-  filter(abs(ratio_pre - 2.20462) > 0.01 | abs(ratio_post - 2.20462) > 0.01) %>%
-  select(PIN, Visit_Num, Weight_lbs_pre, Weight_kg_pre, ratio_pre,
-         Weight_lbs_post, Weight_kg_post, ratio_post)
+  transmute(
+    disagree_pre  = Weight_lbs_pre  - Weight_kg_pre  * 2.20462,
+    disagree_post = Weight_lbs_post - Weight_kg_post * 2.20462
+  ) %>%
+  pivot_longer(everything(), names_to = "timepoint", values_to = "lbs_diff") %>%
+  drop_na() %>%
+  group_by(timepoint) %>%
+  summarise(n = n(), median = median(abs(lbs_diff)),
+            p95 = quantile(abs(lbs_diff), .95), max = max(abs(lbs_diff)))
+
+# The payoff: computing the bout change down each unit separately gives two
+# nearly identical answers, because the disagreement cancels in the
+# subtraction. Averaging them is then a small variance reduction, not a
+# correction -- and this table is the evidence for saying so in a methods
+# section.
+exercise %>%
+  summarise(
+    n              = sum(!is.na(Weight_delta_kg)),
+    via_lbs_mean   = mean(Weight_delta_from_lbs, na.rm = TRUE),
+    via_kg_mean    = mean(Weight_delta_from_kg,  na.rm = TRUE),
+    averaged_mean  = mean(Weight_delta_kg,       na.rm = TRUE),
+    via_lbs_sd     = sd(Weight_delta_from_lbs,   na.rm = TRUE),
+    via_kg_sd      = sd(Weight_delta_from_kg,    na.rm = TRUE),
+    averaged_sd    = sd(Weight_delta_kg,         na.rm = TRUE),
+    route_r        = cor(Weight_delta_from_lbs, Weight_delta_from_kg,
+                         use = "complete.obs")
+  ) %>%
+  mutate(across(everything(), ~ round(.x, 4)))
+
+# Visual version of the same claim.
+ggplot(exercise, aes(Weight_delta_from_kg, Weight_delta_from_lbs)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_point(alpha = .6) +
+  labs(title = "Bout weight change: computed from kg vs from lbs",
+       subtitle = "Dashed line = perfect agreement; points are visits",
+       x = "Change via kg column (kg)", y = "Change via lbs column (kg)")
 
 # 1d. Physiologic range flags. Known hit: PIN 008 visit 11 has
 #     Respirations_Pre = 98, which is not a respiratory rate.
@@ -430,7 +490,9 @@ exercise %>%
   pivot_wider(names_from = status, values_from = n, values_fill = 0)
 
 hydration <- exercise %>%
-  mutate(pct_weight_loss = 100 * (Weight_kg_pre - Weight_kg_post) / Weight_kg_pre,
+  # uses the two-unit averaged change from section 0; sign flipped so that
+  # positive = weight lost
+  mutate(pct_weight_loss = -100 * Weight_delta_kg / Weight_kg_pre,
          hr_delta        = Heart_Rate_Post - Heart_Rate_Pre) %>%
   filter(!is.na(Urinalysis_USG), !is.na(hr_delta))
 
@@ -446,17 +508,26 @@ summary(lmer(pct_weight_loss ~ scale(Urinalysis_USG) + (1 | PIN),
 # not test. Left/right symmetry is the one thing worth checking.
 # =============================================================================
 
+# Same principle as the weights: the anthropometrics are recorded in both
+# inches and centimetres, so take the mean of the two rather than picking one.
+# na.rm means a site measured in only one unit still comes through, using the
+# unit that exists.
+both_units <- function(cm, inch) {
+  x <- rowMeans(cbind(cm, inch * 2.54), na.rm = TRUE)
+  if_else(is.nan(x), NA_real_, x)
+}
+
 anthro <- exercise %>%
   filter(!is.na(Anthro_Waist_cm) | !is.na(Anthro_Waist_in)) %>%
   transmute(
     PIN, Visit_Num,
-    waist_cm = coalesce(Anthro_Waist_cm, Anthro_Waist_in * 2.54),
-    hip_cm   = coalesce(Anthro_Hip_cm,   Anthro_Hip_in   * 2.54),
+    waist_cm = both_units(Anthro_Waist_cm, Anthro_Waist_in),
+    hip_cm   = both_units(Anthro_Hip_cm,   Anthro_Hip_in),
     whr      = waist_cm / hip_cm,
-    rcalf    = coalesce(Anthro_Rcalf_cm, Anthro_Rcalf_in * 2.54),
-    lcalf    = coalesce(Anthro_Lcalf_cm, Anthro_Lcalf_in * 2.54),
-    rarm     = coalesce(Anthro_Rarm_cm,  Anthro_Rarm_in  * 2.54),
-    larm     = coalesce(Anthro_Larm_cm,  Anthro_Larm_in  * 2.54),
+    rcalf    = both_units(Anthro_Rcalf_cm, Anthro_Rcalf_in),
+    lcalf    = both_units(Anthro_Lcalf_cm, Anthro_Lcalf_in),
+    rarm     = both_units(Anthro_Rarm_cm,  Anthro_Rarm_in),
+    larm     = both_units(Anthro_Larm_cm,  Anthro_Larm_in),
     calf_asym = rcalf - lcalf,
     arm_asym  = rarm  - larm
   )

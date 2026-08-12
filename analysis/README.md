@@ -12,8 +12,8 @@ Packages: `tidyverse`, `lme4`, `lmerTest`, `broom`, `broom.mixed`.
 
 | § | Analysis |
 |---|----------|
-| 0 | Cleaning: drop the dictionary row, coerce numerics, trim the ` 009` PIN, derive MAP / pulse pressure / day-in-study, build a tidy `paired` frame |
-| 1 | QC: visit inventory, missingness, lbs↔kg conversion check, physiologic range flags, within-person outliers |
+| 0 | Cleaning: drop the dictionary row, coerce numerics, trim the ` 009` PIN, derive MAP / pulse pressure / day-in-study / weight change, build a tidy `paired` frame |
+| 1 | QC: visit inventory, missingness, lbs↔kg agreement (descriptive), physiologic range flags, within-person outliers |
 | 2 | Descriptives overall and per participant |
 | 3 | Pre→post response to a bout (naive paired *t* vs random-intercept model) |
 | 4 | Training effect: resting vitals across `Visit_Num` |
@@ -43,4 +43,36 @@ Packages: `tidyverse`, `lme4`, `lmerTest`, `broom`, `broom.mixed`.
 4. **`Weight_conv_*`** are QC ratio formulas (lbs/kg ≈ 2.2046), not
    measurements. They spill `#DIV/0!` down ~360 empty rows below the data;
    import with `na = c("", "NA", "#DIV/0!")` or §0 will coerce them to `NA`.
-   All 187 real rows pass the conversion check.
+
+## How weight is handled
+
+Every weight is used exactly as recorded. Nothing is corrected, excluded, or
+back-converted on the basis of the lbs/kg ratio.
+
+Weight appears twice at each timepoint (lbs and kg), and the two columns don't
+always imply the same weight — median disagreement 0.07–0.09 lb, max 1.34 lb.
+Rather than judge one column right, §0 computes the pre→post change down each
+unit separately and averages the two:
+
+```r
+Weight_delta_from_lbs = (Weight_lbs_post - Weight_lbs_pre) / 2.20462
+Weight_delta_from_kg  =  Weight_kg_post  - Weight_kg_pre
+Weight_delta_kg       = mean of the two   # na.rm, so one unit alone still works
+```
+
+The disagreement largely cancels, because whatever offset separates the two
+columns is present in both the pre and the post value of the same column. On
+the 176 visits with all four weights:
+
+| route | mean change | SD |
+|---|---|---|
+| via lbs | −1.2420 kg | 0.5223 |
+| via kg | −1.2438 kg | 0.5206 |
+| **averaged** | **−1.2429 kg** | **0.5188** |
+
+The two routes correlate at r = 0.98 and their means differ by 0.002 kg, so
+averaging is a small variance reduction, not a correction. §1c prints this
+table so the choice is defensible in a methods section.
+
+The same averaging is applied to the anthropometrics in §9, which are likewise
+recorded in both inches and centimetres.
