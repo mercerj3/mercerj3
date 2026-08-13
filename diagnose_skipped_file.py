@@ -16,6 +16,7 @@ from scipy import signal
 FILES_TO_CHECK = ["*V8 POST*", "*V9 POST*", "*V11 PRE*"]
 
 CH = ["F3", "F4", "C3", "Cz", "C4", "P3", "P4"]
+REGIONS = [("frontal", ["F3", "F4"]), ("central", ["C3", "Cz", "C4"]), ("posterior", ["P3", "P4"])]
 FS, NPRE, NPOST, ART = 250, 50, 200, 100.0
 b_bp, a_bp = signal.butter(4, [0.1 / (FS / 2), 30 / (FS / 2)], btype="band")
 b_n, a_n = signal.iirnotch(60.0, 30.0, FS)
@@ -48,8 +49,7 @@ def diagnose(pattern):
 
     print("\n2) Do those markers land on rows that have EEG?")
     surviving = 0
-    for region, chans in [("frontal", ["F3", "F4"]), ("central", ["C3", "Cz", "C4"]),
-                          ("posterior", ["P3", "P4"])]:
+    for region, chans in REGIONS:
         chans = [c for c in chans if c in df]
         if not chans:
             print(f"   {region:10s}: channels missing from file"); continue
@@ -62,35 +62,46 @@ def diagnose(pattern):
     if surviving == 0:
         print("\n   *** CAUSE 2: markers sit on rows where the EEG cells are blank ***\n"); return
 
-    print("\n3) Of the frontal epochs that form, how many are clean enough?")
-    chans = [c for c in ["F3", "F4"] if c in df]
-    good = (df[chans].apply(pd.to_numeric, errors="coerce").notna().all(axis=1).to_numpy()
-            & np.isfinite(t_all))
-    ts = t_all[good]
-    X = df[chans].apply(pd.to_numeric, errors="coerce").to_numpy(float)[good]
-    m = mk[good]
-    o = np.argsort(ts, kind="stable"); ts, X, m = ts[o], X[o], m[o]
-    filt = np.empty_like(X)
-    for k in range(X.shape[1]):
-        filt[:, k] = signal.filtfilt(b_n, a_n, signal.filtfilt(b_bp, a_bp, X[:, k]))
-    total = kept_ep = 0; ptps = []
-    for code, t in zip(m, ts):
-        if code not in (5, 6): continue
-        s = int(np.searchsorted(ts, t)); a, bb = s - NPRE, s + NPOST
-        if a < 0 or bb > len(filt): continue
-        total += 1
-        seg = filt[a:bb, :] - filt[a:bb, :][:NPRE].mean(0, keepdims=True)
-        p = float(np.ptp(seg, 0).max()); ptps.append(p)
-        if p <= ART: kept_ep += 1
-    print(f"   epochs formed         : {total}")
-    print(f"   passed the 100 uV test: {kept_ep}   (need >= 1 to keep, >= 20 to analyse)")
-    if ptps:
-        print(f"   swing per epoch       : median {np.median(ptps):.0f} uV, "
-              f"worst {np.max(ptps):.0f} uV")
-    if kept_ep == 0:
-        print("\n   *** CAUSE 3: every epoch exceeded the artifact threshold ***\n")
+    print("\n3) Of the epochs that form, how many are clean enough?  (every region)")
+    print(f"   {'region':10s} {'epochs':>7} {'passed':>7} {'median uV':>10} {'best uV':>9} {'worst uV':>9}")
+    total_kept = 0
+    for region, chans in REGIONS:
+        chans = [c for c in chans if c in df]
+        if not chans:
+            print(f"   {region:10s}  channels missing from file"); continue
+        good = (df[chans].apply(pd.to_numeric, errors="coerce").notna().all(axis=1).to_numpy()
+                & np.isfinite(t_all))
+        if good.sum() < 500:
+            print(f"   {region:10s}  too few usable samples"); continue
+        ts = t_all[good]
+        X = df[chans].apply(pd.to_numeric, errors="coerce").to_numpy(float)[good]
+        m = mk[good]
+        o = np.argsort(ts, kind="stable"); ts, X, m = ts[o], X[o], m[o]
+        filt = np.empty_like(X)
+        for k in range(X.shape[1]):
+            filt[:, k] = signal.filtfilt(b_n, a_n, signal.filtfilt(b_bp, a_bp, X[:, k]))
+        total = kept_ep = 0; ptps = []
+        for code, t in zip(m, ts):
+            if code not in (5, 6): continue
+            s = int(np.searchsorted(ts, t)); a, bb = s - NPRE, s + NPOST
+            if a < 0 or bb > len(filt): continue
+            total += 1
+            # the pipeline rejects on the LARGEST swing across the region's channels
+            seg = filt[a:bb, :] - filt[a:bb, :][:NPRE].mean(0, keepdims=True)
+            p = float(np.ptp(seg, 0).max()); ptps.append(p)
+            if p <= ART: kept_ep += 1
+        total_kept += kept_ep
+        if ptps:
+            print(f"   {region:10s} {total:>7} {kept_ep:>7} {np.median(ptps):>10.0f} "
+                  f"{np.min(ptps):>9.0f} {np.max(ptps):>9.0f}")
+        else:
+            print(f"   {region:10s} {total:>7} {kept_ep:>7}        no epochs formed")
+    print(f"\n   threshold is {ART:.0f} uV; a region needs >= 1 epoch to yield any number,"
+          f"\n   and >= 20 for the analysis to use it")
+    if total_kept == 0:
+        print("\n   *** CAUSE 3: every epoch on every region exceeded the threshold ***\n")
     else:
-        print("\n   this file looks usable - if it was skipped, check the other regions\n")
+        print(f"\n   {total_kept} epoch(s) survived somewhere - this file is not empty\n")
 
 
 for pattern in FILES_TO_CHECK:
