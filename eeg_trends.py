@@ -199,18 +199,29 @@ def plot_participant_trends(t, pid, value="abs_power_uv2", save_dir=None):
     return fig
 
 
-def plot_band_across_participants(t, band, value="abs_power_uv2", save_dir=None):
+def plot_band_across_participants(t, band, value="abs_power_uv2", save_dir=None,
+                                  share_y=False):
     """One band, every participant - a small multiple per participant.
 
     Small multiples rather than nine overlaid lines: nine cycled colours are not
     distinguishable, and each participant's power is on a different scale anyway.
+
+    Every panel shares the SAME x-axis, spanning the full visit range in the
+    study, so a gap in one participant's line is visibly a missing visit rather
+    than a differently-stretched axis. Panels keep their own y-scale by default;
+    pass share_y=True to put them on a common y-axis too, which is usually what
+    you want for relative power since every panel is already in percent.
     """
     pids = sorted(t.participant.unique())
     if not pids:
         print("nothing to plot"); return None
     rel = value == "rel_power_pct"
     ncol = min(3, len(pids)); nrow = int(np.ceil(len(pids) / ncol))
-    fig, axes = plt.subplots(nrow, ncol, figsize=(3.6 * ncol, 2.8 * nrow), squeeze=False)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(3.6 * ncol, 2.8 * nrow), squeeze=False,
+                             sharex=True, sharey=share_y)
+
+    # one x-range for every panel, taken from the whole study
+    allv = sorted(int(v) for v in t.visit.dropna().unique())
     for ax, pid in zip(axes.ravel(), pids):
         g = t[(t.participant == pid) & (t.band == band)]
         for phase, ls, marker in [("pre", "--", "o"), ("post", "-", "s")]:
@@ -224,6 +235,13 @@ def plot_band_across_participants(t, band, value="abs_power_uv2", save_dir=None)
         ax.tick_params(labelsize=7, length=0)
         if not rel:
             _log_y(ax)
+    if allv:
+        ax0 = axes.ravel()[0]
+        ax0.set_xlim(min(allv) - 0.6, max(allv) + 0.6)
+        if len(allv) <= 12:                       # few enough visits to label each one
+            ax0.set_xticks(allv)
+        else:                                     # otherwise let matplotlib thin them out
+            ax0.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=8, integer=True))
     for ax in axes.ravel()[len(pids):]:
         ax.axis("off")
     for ax in axes[-1]:
@@ -231,15 +249,18 @@ def plot_band_across_participants(t, band, value="abs_power_uv2", save_dir=None)
     for r in range(nrow):
         axes[r, 0].set_ylabel("share (%)" if rel else "power (uV^2)", fontsize=8)
     lo, hi = BAND_HZ[band]
+    ynote = ("all panels share one y-scale" if share_y
+             else "each panel has its own y-scale - compare the shape of a trend, not its height")
     fig.suptitle(f"{band} ({lo}-{hi} Hz) - frontal No-Go band power across visits"
                  f"{' (relative)' if rel else ' (absolute, log scale)'}\n"
-                 f"each panel has its own y-scale - compare the shape of a trend, not its height",
+                 f"same visit range in every panel; {ynote}",
                  fontsize=11, fontweight="bold")
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     _phase_legend(fig, color=BCOL[band], y=0.005)
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
-        fig.savefig(os.path.join(save_dir, f"band_{band}_{'rel' if rel else 'abs'}_all.png"))
+        sfx = "_sharedy" if share_y else ""
+        fig.savefig(os.path.join(save_dir, f"band_{band}_{'rel' if rel else 'abs'}_all{sfx}.png"))
     return fig
 
 
