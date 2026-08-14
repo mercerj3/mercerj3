@@ -88,10 +88,23 @@ def prepare(s, region="frontal", condition="NoGo", min_epochs=MIN_EPOCHS):
     relative power = this band's share of the total 0.5-30 Hz power, in percent.
     It is computed only for sessions where all four bands survived the quality
     filter, so the four shares always add up to 100.
+
+    Recordings whose filename carries no PRE or POST (phase "na") are dropped and
+    reported. They cannot contribute to a PRE-vs-POST analysis, but if left in
+    they still widen every figure's visit axis, which makes participants with
+    extra follow-up visits look different for no real reason.
     """
     t = s[(s.region == region) & (s.condition == condition)].copy()
     t = t[t.n_epochs >= min_epochs]
     t = t[t.band.isin(BANDS)]
+
+    unphased = t[~t.phase.isin(["pre", "post"])]
+    if len(unphased):
+        vis = (unphased[["participant", "visit"]].drop_duplicates()
+               .sort_values(["participant", "visit"]))
+        listed = ", ".join(f"P{int(r.participant)} V{int(r.visit)}" for r in vis.itertuples())
+        print(f"dropped {len(vis)} recording(s) with no PRE/POST in the filename: {listed}")
+    t = t[t.phase.isin(["pre", "post"])]
 
     key = ["participant", "visit", "phase"]
     complete = t.groupby(key).band.transform("nunique") == len(BANDS)
