@@ -1,8 +1,9 @@
 # C-Telopeptide (CTX) trend by PIN and visit
 
-`ctx_trend.py` pulls the serum C-Telopeptide column out of a Labcorp study-results
-export in the "Study Data Entry Template" layout and produces the tables and plot
-needed for a CTX trend.
+`ctx_trend.py` and `ctx_trend.R` pull the serum C-Telopeptide column out of a Labcorp
+study-results export in the "Study Data Entry Template" layout and produce the tables
+and plot needed for a CTX trend. The two are ports of each other — same flags, same
+outputs — so use whichever fits your workflow.
 
 ## Input layout
 
@@ -25,10 +26,19 @@ Two details the parser handles explicitly:
 
 ## Usage
 
+Python and R versions are provided; they take the same flags and produce the same
+tables and plot.
+
 ```bash
+# Python
 pip install pandas matplotlib
 python ctx_trend.py --csv path/to/Labcorp_Results.csv --outdir out
 python ctx_trend.py --csv path/to/Labcorp_Results.csv --outdir out --x days
+
+# R
+install.packages(c("readr", "dplyr", "tidyr", "ggplot2"))
+Rscript ctx_trend.R --csv path/to/Labcorp_Results.csv --outdir out
+Rscript ctx_trend.R --csv path/to/Labcorp_Results.csv --outdir out --x days
 ```
 
 `--x visit` (default) plots against visit number; `--x days` plots against days from
@@ -47,11 +57,17 @@ participants entered CTX collection at different visits.
 
 ## Functions
 
+The same four functions exist in both scripts, so a change to the parsing rules can be
+mirrored across them:
+
 - `load_labs(csv_path)` → `(data, units, refs)` — strips the two metadata rows and returns
-  them as `{column: value}` dicts
+  them as `{column: value}` dicts (named character vectors in R)
 - `ctx_by_pin_visit(data)` → tidy long CTX frame
 - `ctx_wide(ctx)` → PIN × visit matrix, columns ordered by visit then pre/post
-- `plot_ctx_trend(ctx, out_path, x=..., units=..., ref_range=...)` → saved figure path
+- `plot_ctx_trend(ctx, out_path, x = ..., units = ..., ref_range = ...)` → saved figure path
+
+The R version sources cleanly (`source("ctx_trend.R")` runs no side effects), so the
+functions can also be used interactively from the console or an Rmd.
 
 ## Note on data
 
