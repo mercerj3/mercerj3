@@ -2,51 +2,55 @@
 #
 # C-Telopeptide (CTX) trend by PIN and visit.
 #
-# Reads a Labcorp study-results export in the "Study Data Entry Template" layout
-# and pulls the serum C-Telopeptide column into a tidy long table keyed by
-# participant (PIN) and visit, then writes a wide PIN x Visit table and a trend
+# Works on a data frame already loaded in your session — named `study` below —
+# holding a Labcorp study-results export in the "Study Data Entry Template"
+# layout. Pulls the serum C-Telopeptide column into a tidy long table keyed by
+# participant (PIN) and visit, then builds a wide PIN x Visit table and a trend
 # plot.
 #
 # Layout assumed (matches Study_Data_Entry_Template_..._Labcorp_Results.csv):
-#     row 1  column headers
-#     row 2  units             (C-Telopeptide,Serum -> pg/mL)
-#     row 3  reference intervals
-#     row 4+ one row per participant / visit / draw
+#     row 1  units             (C-Telopeptide,Serum -> pg/mL)
+#     row 2  reference intervals
+#     row 3+ one row per participant / visit / draw
+#
+# Those first two rows sit under the header, so they arrive as data rows in
+# `study` no matter how it was read; `ctx_by_pin_visit()` drops them, along with
+# the blank filler rows at the bottom of the template.
 #
 # Usage:
-#     Rscript ctx_trend.R --csv path/to/Labcorp_Results.csv --outdir out
-#     Rscript ctx_trend.R --csv path/to/Labcorp_Results.csv --x days
+#     source("ctx_trend.R")
+#     ctx  <- ctx_by_pin_visit(study)
+#     wide <- ctx_wide(ctx)
+#     plot_ctx_trend(ctx)                 # x = visit number
+#     plot_ctx_trend(ctx, x = "days")     # x = days from baseline draw
 
 suppressPackageStartupMessages({
-  library(readr)
   library(dplyr)
   library(tidyr)
   library(ggplot2)
 })
 
-CTX_COL <- "C-Telopeptide,Serum"
-UNITS_ROW <- 1L # position within the two non-data header rows
-REF_ROW <- 2L
-
-#' Read the template CSV.
+#' Locate a column by name, tolerating however `study` was read in.
 #'
-#' The two metadata rows under the header are stripped off and returned as
-#' named character vectors so the CTX units/reference range can be used in
-#' labels.
+#' `read.csv()` turns "C-Telopeptide,Serum" into "C.Telopeptide.Serum" and
+#' `janitor::clean_names()` into "c_telopeptide_serum", while `readr::read_csv()`
+#' keeps it verbatim. Comparing on alphanumerics only makes all of these match.
+find_col <- function(df, name) {
+  norm <- function(x) tolower(gsub("[^A-Za-z0-9]", "", x))
+  hit <- which(norm(names(df)) == norm(name))
+  if (length(hit) == 0) {
+    stop(sprintf("column '%s' not found in the data frame", name), call. = FALSE)
+  }
+  names(df)[hit[1]]
+}
+
+#' Pull a column as trimmed character, blanks as NA.
 #'
-#' @return list(data = tibble, units = named chr, refs = named chr)
-load_labs <- function(csv_path) {
-  raw <- read_csv(csv_path, col_types = cols(.default = col_character()),
-                  name_repair = "minimal", progress = FALSE)
-
-  units <- unlist(raw[UNITS_ROW, ], use.names = TRUE)
-  refs <- unlist(raw[REF_ROW, ], use.names = TRUE)
-  data <- raw[-seq_len(REF_ROW), ]
-
-  # Drop the blank filler rows at the bottom of the template.
-  data <- data[!is.na(data$PIN) & trimws(data$PIN) != "", ]
-
-  list(data = data, units = units, refs = refs)
+#' Columns may already be typed (numeric/Date) if the reader guessed, so
+#' everything is routed through character first for one coercion path.
+col_chr <- function(df, name) {
+  x <- trimws(as.character(df[[find_col(df, name)]]))
+  dplyr::na_if(x, "")
 }
 
 #' Tidy one-row-per-draw CTX table with baseline-relative columns.
@@ -55,18 +59,23 @@ load_labs <- function(csv_path) {
 #' 007+ in `Pre_Post_New`; the two are coalesced into a single `pre_post`.
 #' A visit can appear twice for the same PIN (a pre and a post draw), so the
 #' natural key is (pin, visit, pre_post).
-ctx_by_pin_visit <- function(data) {
-  blank_to_na <- function(x) dplyr::na_if(trimws(x), "")
+#'
+#' @param study data frame of the export, header row already used as names
+ctx_by_pin_visit <- function(study) {
+  # Drop the units / reference-interval rows and the blank filler rows first, so
+  # the header text ("yyyy-mm-dd", "pg/mL") never reaches the type coercions.
+  pin <- col_chr(study, "PIN")
+  study <- study[!is.na(pin) & !grepl("^(ParticipantID|ReferenceIntervals)", pin), ]
 
   ctx <- tibble(
-    pin = trimws(data$PIN),
-    visit = suppressWarnings(as.integer(blank_to_na(data$Visit_Number))),
+    pin = col_chr(study, "PIN"),
+    visit = suppressWarnings(as.integer(col_chr(study, "Visit_Number"))),
     pre_post = suppressWarnings(as.integer(coalesce(
-      blank_to_na(data$Pre_Post_New),
-      blank_to_na(data$Pre_Post_Old)
+      col_chr(study, "Pre_Post_New"),
+      col_chr(study, "Pre_Post_Old")
     ))),
-    collection_date = as.Date(blank_to_na(data$Collection_Date)),
-    ctx_pg_ml = suppressWarnings(as.numeric(blank_to_na(data[[CTX_COL]])))
+    collection_date = as.Date(col_chr(study, "Collection_Date"), format = "%Y-%m-%d"),
+    ctx_pg_ml = suppressWarnings(as.numeric(col_chr(study, "C-Telopeptide,Serum")))
   )
 
   ctx %>%
@@ -112,9 +121,24 @@ ctx_wide <- function(ctx) {
     select(pin, any_of(visit_label_levels(ctx)))
 }
 
+#' Units / reference interval for a lab column, read off the template's row 1-2.
+#'
+#' Returns "" when the export leaves the cell blank, as it does for CTX.
+lab_metadata <- function(study, name = "C-Telopeptide,Serum") {
+  pin <- col_chr(study, "PIN")
+  value_at <- function(prefix) {
+    row <- which(grepl(prefix, pin))[1]
+    if (is.na(row)) return("")
+    val <- as.character(study[[find_col(study, name)]][row])
+    if (is.na(val)) "" else trimws(val)
+  }
+  list(units = value_at("^ParticipantID"), ref_range = value_at("^ReferenceIntervals"))
+}
+
 #' Line plot of CTX over time, one series per PIN.
-plot_ctx_trend <- function(ctx, out_path, x = "visit", units = "pg/mL",
+plot_ctx_trend <- function(ctx, x = c("visit", "days"), units = "pg/mL",
                            ref_range = "") {
+  x <- match.arg(x)
   x_col <- switch(x, visit = "visit", days = "days_from_baseline")
   x_label <- switch(x, visit = "Visit number", days = "Days from baseline draw")
 
@@ -145,48 +169,25 @@ plot_ctx_trend <- function(ctx, out_path, x = "visit", units = "pg/mL",
     p <- p + scale_x_continuous(breaks = sort(unique(ctx$visit)))
   }
 
-  ggsave(out_path, p, width = 9, height = 5.5, dpi = 150)
-  out_path
+  p
 }
 
-#' Minimal --flag value parser so the script needs only the tidyverse.
-parse_args <- function(args) {
-  opts <- list(csv = NULL, outdir = "out", x = "visit")
-  i <- 1L
-  while (i <= length(args)) {
-    key <- sub("^--", "", args[[i]])
-    if (!key %in% names(opts) || i == length(args)) {
-      stop("usage: Rscript ctx_trend.R --csv FILE [--outdir DIR] [--x visit|days]",
-           call. = FALSE)
-    }
-    opts[[key]] <- args[[i + 1L]]
-    i <- i + 2L
-  }
-  if (is.null(opts$csv)) stop("--csv is required", call. = FALSE)
-  if (!opts$x %in% c("visit", "days")) stop("--x must be 'visit' or 'days'", call. = FALSE)
-  opts
-}
+# ---------------------------------------------------------------------------
+# Run on `study`
+# ---------------------------------------------------------------------------
+# Guarded so `source("ctx_trend.R")` just defines the functions when `study`
+# is not (yet) in the session.
 
-main <- function() {
-  opts <- parse_args(commandArgs(trailingOnly = TRUE))
-  dir.create(opts$outdir, recursive = TRUE, showWarnings = FALSE)
-
-  labs <- load_labs(opts$csv)
-  ctx <- ctx_by_pin_visit(labs$data)
+if (exists("study")) {
+  ctx <- ctx_by_pin_visit(study)
   wide <- ctx_wide(ctx)
+  meta <- lab_metadata(study)
 
-  long_path <- file.path(opts$outdir, "ctx_by_pin_visit.csv")
-  wide_path <- file.path(opts$outdir, "ctx_pin_by_visit_wide.csv")
-  # Blank rather than "NA" for missing cells, so the CSVs import cleanly elsewhere.
-  write_csv(ctx, long_path, na = "")
-  write_csv(wide, wide_path, na = "")
-
-  plot_path <- plot_ctx_trend(
+  ctx_plot <- plot_ctx_trend(
     ctx,
-    file.path(opts$outdir, "ctx_trend.png"),
-    x = opts$x,
-    units = if (is.na(labs$units[[CTX_COL]])) "pg/mL" else labs$units[[CTX_COL]],
-    ref_range = if (is.na(labs$refs[[CTX_COL]])) "" else labs$refs[[CTX_COL]]
+    x = "visit",
+    units = if (nzchar(meta$units)) meta$units else "pg/mL",
+    ref_range = meta$ref_range
   )
 
   cat(sprintf("CTX results: %d draws across %d participants\n\n",
@@ -196,9 +197,11 @@ main <- function() {
         row.names = FALSE)
   cat("\nPIN x visit matrix (pg/mL):\n")
   print(as.data.frame(wide), row.names = FALSE)
-  cat(sprintf("\nWrote %s\n      %s\n      %s\n", long_path, wide_path, plot_path))
-}
 
-if (sys.nframe() == 0L) {
-  main()
+  print(ctx_plot)
+
+  # To save:
+  # write.csv(ctx, "ctx_by_pin_visit.csv", row.names = FALSE, na = "")
+  # write.csv(wide, "ctx_pin_by_visit_wide.csv", row.names = FALSE, na = "")
+  # ggsave("ctx_trend.png", ctx_plot, width = 9, height = 5.5, dpi = 150)
 }
