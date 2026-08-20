@@ -55,6 +55,18 @@ SAVE_PDF  <- TRUE
 FIG_W     <- 9.5
 FIG_H     <- 7.5
 
+## --- FIGURE NOTE ----------------------------------------------------------
+# Short line printed under the figure. The fuller wording belongs in the
+# manuscript figure legend - see LAB note at the bottom of this script.
+FIG_NOTE <- paste0(
+  "Stratum = race | sexual orientation | education. ",
+  "Predicted probabilities from a two-level logistic model with a random ",
+  "intercept for stratum and survey year as the only fixed effect.\n",
+  "95% CIs are percentile intervals from ", format(N_SIMS, big.mark = ","),
+  " Monte Carlo draws of the fixed effects and stratum random effects. ",
+  "Dashed line = overall predicted probability. Estimates are unweighted."
+)
+
 # "average"   - marginalise over survey years (recommended for the study period)
 # "reference" - hold year at its first level; simpler, condition on one year
 YEAR_MODE <- "average"
@@ -186,7 +198,7 @@ p_null <- ggplot(strata_pred, aes(x = pred, y = lab_n)) +
     subtitle = paste0(subtitle_txt, "\nDashed line = overall predicted probability"),
     x = "Predicted probability (95% CI)",
     y = NULL,
-    caption = "Stratum = Race | Sexual orientation | Education"
+    caption = FIG_NOTE
   ) +
   theme_minimal(base_size = BASE_SIZE) +
   theme(
@@ -200,7 +212,7 @@ p_null <- ggplot(strata_pred, aes(x = pred, y = lab_n)) +
     axis.title    = element_text(colour = "black", size = SIZE_AXISTTL),
     plot.title    = element_text(colour = "black", face = "bold", size = SIZE_TITLE),
     plot.subtitle = element_text(colour = "black", size = SIZE_SUBTITLE),
-    plot.caption  = element_text(colour = "black", size = SIZE_CAPTION),
+    plot.caption  = element_text(colour = "black", size = SIZE_CAPTION, hjust = 0),
     panel.grid.major.y = element_line(colour = "grey92"),
     panel.grid.minor   = element_blank()
   )
