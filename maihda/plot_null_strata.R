@@ -37,6 +37,24 @@ library(MASS)          # mvrnorm
 N_SIMS    <- 2000
 SEED      <- 456
 
+## --- TEXT SIZE ------------------------------------------------------------
+# BASE_SIZE scales EVERYTHING proportionally - change this first.
+# The individual sizes below are absolute (points) and override the base.
+BASE_SIZE     <- 10    # try 12-14 for a slide, 8-9 to fit more strata on a page
+SIZE_AXISTEXT <- 9     # the stratum labels and the % ticks
+SIZE_AXISTTL  <- 10    # "Predicted probability (95% CI)"
+SIZE_TITLE    <- 13
+SIZE_SUBTITLE <- 10
+SIZE_CAPTION  <- 8
+POINT_SIZE    <- 2.3   # the dots (not text, but usually tuned alongside)
+
+## --- OUTPUT ---------------------------------------------------------------
+# PDF is vector: text stays sharp at any zoom and never pixelates when placed
+# in Word/LaTeX/Illustrator. Use the PNG only for quick previews.
+SAVE_PDF  <- TRUE
+FIG_W     <- 9.5
+FIG_H     <- 7.5
+
 # "average"   - marginalise over survey years (recommended for the study period)
 # "reference" - hold year at its first level; simpler, condition on one year
 YEAR_MODE <- "average"
@@ -161,7 +179,7 @@ p_null <- ggplot(strata_pred, aes(x = pred, y = lab_n)) +
   geom_vline(xintercept = grand_mean, linetype = "dashed", colour = "grey40") +
   geom_errorbarh(aes(xmin = lwr, xmax = upr), height = 0,
                  colour = "grey55", linewidth = 0.5) +
-  geom_point(colour = "#2c7fb8", size = 2.3) +
+  geom_point(colour = "#2c7fb8", size = POINT_SIZE) +
   scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
   labs(
     title    = "Predicted probability of ever having had a mammogram",
@@ -170,7 +188,7 @@ p_null <- ggplot(strata_pred, aes(x = pred, y = lab_n)) +
     y = NULL,
     caption = "Stratum = Race | Sexual orientation | Education"
   ) +
-  theme_minimal(base_size = 10) +
+  theme_minimal(base_size = BASE_SIZE) +
   theme(
     # theme_minimal leaves plot.background$fill NULL, so a saved PNG is
     # TRANSPARENT. Composited on a dark background the black text vanishes.
@@ -178,17 +196,27 @@ p_null <- ggplot(strata_pred, aes(x = pred, y = lab_n)) +
     plot.background  = element_rect(fill = "white", colour = NA),
     panel.background = element_rect(fill = "white", colour = NA),
     text          = element_text(colour = "black"),
-    axis.text     = element_text(colour = "black"),   # grey30 by default
-    axis.title    = element_text(colour = "black"),
-    plot.title    = element_text(colour = "black", face = "bold"),
-    plot.subtitle = element_text(colour = "black"),
-    plot.caption  = element_text(colour = "black"),
+    axis.text     = element_text(colour = "black", size = SIZE_AXISTEXT),
+    axis.title    = element_text(colour = "black", size = SIZE_AXISTTL),
+    plot.title    = element_text(colour = "black", face = "bold", size = SIZE_TITLE),
+    plot.subtitle = element_text(colour = "black", size = SIZE_SUBTITLE),
+    plot.caption  = element_text(colour = "black", size = SIZE_CAPTION),
     panel.grid.major.y = element_line(colour = "grey92"),
     panel.grid.minor   = element_blank()
   )
 
 print(p_null)
-ggsave(OUT_PNG, p_null, width = 9.5, height = 7.5, dpi = 300, bg = "white")
+
+# Raster preview. dpi 300 is fine, but any raster image pixelates when a
+# viewer or document rescales it.
+ggsave(OUT_PNG, p_null, width = FIG_W, height = FIG_H, dpi = 300, bg = "white")
+
+# Vector copy for the manuscript - text is stored as text, so it stays sharp
+# at every zoom level and prints cleanly.
+if (SAVE_PDF) {
+  ggsave(sub("\\.png$", ".pdf", OUT_PNG), p_null,
+         width = FIG_W, height = FIG_H, device = cairo_pdf, bg = "white")
+}
 
 ## ---------------------------------------------------------------------------
 ## 6. The numbers behind the plot
